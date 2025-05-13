@@ -1,0 +1,701 @@
+<?php
+session_start();
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit;
+}
+
+// Fetch cart data from session or database
+$cart = isset($_SESSION['cart']) ? $_SESSION['cart'] : [];
+$total = array_reduce($cart, function ($sum, $item) {
+    return $sum + ($item['price'] * $item['quantity']);
+}, 0);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    echo "User ID from session: " . $_SESSION['user_id'] . "<br>";
+    $payment_method = $_POST['payment_method'];
+    $upi_id = $_POST['upi_id'] ?? null;
+    $card_number = $_POST['card_number'] ?? null;
+
+    // Mask card number (store only the last 4 digits)
+    $masked_card_number = $card_number ? '**** **** **** ' . substr($card_number, -4) : null;
+
+    // Validate UPI ID if UPI Payment is selected
+    if ($payment_method === 'UPI' && (!preg_match('/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+$/', $upi_id))) {
+        $error = "Invalid UPI ID. Please enter a valid UPI ID.";
+    } else {
+        // Save the order to the database
+        require_once 'database.php';
+        $user_id = $_SESSION['user_id'];
+        $items = json_encode($cart);
+        
+        echo "<pre>";
+        print_r([
+            'user_id' => $user_id,
+            'items' => $items,
+            'total' => $total,
+            'payment_method' => $payment_method,
+            'payment_details' => $payment_details,
+        ]);
+        
+        echo "</pre>";
+        // Insert order into the orders table
+$stmt = $pdo->prepare("INSERT INTO orders (user_id, items, total, status) VALUES (?, ?, ?, 'Pending')");
+if ($stmt->execute([$user_id, $items, $total])) {
+    $order_id = $pdo->lastInsertId();
+    echo "Order inserted successfully. Order ID: $order_id<br>";
+
+    // Insert payment details into the payments table
+    $payment_details = $payment_method === 'UPI' ? $upi_id : $masked_card_number;
+    $stmt = $pdo->prepare("INSERT INTO payments (order_id, user_id, payment_method, payment_details, amount, status) VALUES (?, ?, ?, ?, ?, 'Success')");
+    if ($stmt->execute([$order_id, $user_id, $payment_method, $payment_details, $total])) {
+        echo "Payment inserted successfully.<br>";
+
+        // Clear the cart
+        unset($_SESSION['cart']);
+
+        // Redirect to a success page
+        header("Location: order-success.php");
+        exit;
+    } else {
+        echo "Failed to insert payment details: " . implode(", ", $stmt->errorInfo()) . "<br>";
+    }
+} else {
+    echo "Failed to insert order: " . implode(", ", $stmt->errorInfo()) . "<br>";
+}
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Place Order | Wow Gifts</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #e83e8c;
+            --secondary: #ff69b4;
+            --dark: #2d3436;
+            --light: #f7f7f7;
+            --white: #ffffff;
+            --shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            --transition: all 0.3s ease;
+            --border-radius: 10px;
+            --border-radius-sm: 6px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), 
+                        url('https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1470&q=80') no-repeat center center/cover;
+            font-family: 'Montserrat', sans-serif;
+            background-color: var(--light);
+            color: var(--dark);
+            line-height: 1.6;
+            min-height: 100vh;
+            padding: 20px;
+            
+        }
+
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin: 30px auto;
+            background: var(--white);
+            padding: 40px;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 5px;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 2.2rem;
+            color: var(--primary);
+            margin-bottom: 30px;
+            font-weight: 700;
+            position: relative;
+            padding-bottom: 15px;
+        }
+
+        h1::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80px;
+            height: 3px;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+        }
+
+        .payment-method {
+            margin-bottom: 30px;
+        }
+
+        .payment-method-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: var(--dark);
+            display: flex;
+            align-items: center;
+        }
+
+        .payment-method-title i {
+            margin-right: 10px;
+            color: var(--primary);
+        }
+
+        .payment-options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .payment-option {
+            position: relative;
+        }
+
+        .payment-option input[type="radio"] {
+            position: absolute;
+            opacity: 0;
+        }
+
+        .payment-option label {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            background: var(--light);
+            border: 2px solid #e0e0e0;
+            border-radius: var(--border-radius-sm);
+            cursor: pointer;
+            transition: var(--transition);
+            font-weight: 500;
+        }
+
+        .payment-option label:hover {
+            border-color: var(--primary);
+        }
+
+        .payment-option input[type="radio"]:checked + label {
+            border-color: var(--primary);
+            background-color: rgba(232, 62, 140, 0.1);
+        }
+
+        .payment-option label i {
+            font-size: 1.5rem;
+            margin-right: 10px;
+            color: var(--primary);
+        }
+
+        .payment-details {
+            display: none;
+            margin-top: 20px;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .payment-details.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--dark);
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: var(--border-radius-sm);
+            font-family: 'Montserrat', sans-serif;
+            transition: var(--transition);
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(232, 62, 140, 0.2);
+        }
+
+        .card-details-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .submit-btn {
+            display: block;
+            width: 100%;
+            padding: 15px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: var(--border-radius-sm);
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 1.1rem;
+            margin-top: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            box-shadow: 0 4px 15px rgba(232, 62, 140, 0.4);
+        }
+
+        .submit-btn:hover {
+            background: var(--secondary);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 105, 180, 0.6);
+        }
+
+        .submit-btn:active {
+            transform: translateY(0);
+        }
+
+        .security-note {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 20px;
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .security-note i {
+            margin-right: 8px;
+            color: var(--primary);
+        }
+
+        /* Order Summary Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: var(--transition);
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal {
+            background: var(--white);
+            padding: 30px;
+            border-radius: var(--border-radius);
+            width: 90%;
+            max-width: 500px;
+            box-shadow: var(--shadow);
+            text-align: center;
+            transform: translateY(20px);
+            transition: var(--transition);
+        }
+
+        .modal-overlay.active .modal {
+            transform: translateY(0);
+        }
+
+        .modal-icon {
+            font-size: 3rem;
+            color: var(--primary);
+            margin-bottom: 20px;
+        }
+
+        .modal-title {
+            font-size: 1.8rem;
+            margin-bottom: 15px;
+            color: var(--primary);
+        }
+
+        .modal-content {
+            margin-bottom: 25px;
+            text-align: left;
+        }
+
+        .order-summary-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px dashed #eee;
+        }
+
+        .order-summary-item:last-child {
+            border-bottom: none;
+            font-weight: 600;
+            color: var(--primary);
+        }
+
+        .modal-btn {
+            padding: 12px 30px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: var(--border-radius-sm);
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 1rem;
+        }
+
+        .modal-btn:hover {
+            background: var(--secondary);
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 576px) {
+            .container {
+                padding: 30px 20px;
+            }
+            
+            .payment-options {
+                grid-template-columns: 1fr;
+            }
+            
+            .card-details-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Place Your Order</h1>
+        <form id="payment-form">
+            <!-- Payment Method Selection -->
+            <div class="payment-method">
+                <div class="payment-method-title">
+                    <i class="fas fa-credit-card"></i>
+                    <span>Select Payment Method</span>
+                </div>
+                <div class="payment-options">
+                    <div class="payment-option">
+                        <input type="radio" name="payment-method" id="card" value="card" required>
+                        <label for="card">
+                            <i class="far fa-credit-card"></i>
+                            Credit Card
+                        </label>
+                    </div>
+                    <div class="payment-option">
+                        <input type="radio" name="payment-method" id="upi" value="upi">
+                        <label for="upi">
+                            <i class="fas fa-mobile-alt"></i>
+                            UPI Payment
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card Payment Details -->
+            <div class="payment-details" id="card-details">
+                <div class="form-group">
+                    <label for="card-number">Card Number</label>
+                    <input type="text" id="card-number" placeholder="1234 5678 9012 3456" required>
+                </div>
+                <div class="card-details-grid">
+                    <div class="form-group">
+                        <label for="card-expiry">Expiry Date</label>
+                        <input type="text" id="card-expiry" placeholder="MM/YY" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="card-cvv">CVV</label>
+                        <input type="text" id="card-cvv" placeholder="•••" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="card-name">Cardholder Name</label>
+                    <input type="text" id="card-name" placeholder="Name on card" required>
+                </div>
+            </div>
+
+            <!-- UPI Payment Details -->
+            <div class="payment-details" id="upi-details">
+                <div class="form-group">
+                    <label for="upi-id">UPI ID</label>
+                    <input type="text" id="upi-id" placeholder="yourname@upi" required>
+                </div>
+                <div class="form-group">
+                    <label for="upi-app">Select UPI App</label>
+                    <select id="upi-app" class="form-group input" style="width: 100%; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: var(--border-radius-sm);">
+                        <option value="">Select your UPI app</option>
+                        <option value="gpay">Google Pay</option>
+                        <option value="phonepe">PhonePe</option>
+                        <option value="paytm">Paytm</option>
+                        <option value="amazonpay">Amazon Pay</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Submit Button -->
+                <!--(Credit Card)-->
+                    <button type="button" class="submit-btn" id="card-submit-btn" style="display: none;">
+                        <i class="fas fa-lock" style="margin-right: 8px;"></i>
+                        Place Order 
+                    </button>
+                <!--(UPI payment)-->
+                    <button type="button" class="submit-btn" id="upi-submit-btn" style="display: none;">
+                        <i class="fas fa-lock" style="margin-right: 8px;"></i>
+                        Place Order
+                    </button>
+            
+            <div class="security-note">
+                <i class="fas fa-shield-alt"></i>
+                <span>Your payment information is secure</span>
+            </div>
+        </form>
+    </div>
+
+    <!-- Order Summary Modal -->
+    <div class="modal-overlay" id="order-summary-modal">
+        <div class="modal">
+            <div class="modal-icon">
+                <i class="fas fa-check-circle"></i>
+            </div>
+            <h2 class="modal-title">Order Placed Successfully!</h2>
+            <div class="modal-content">
+                <div class="order-summary-item">
+                    <span>Order ID:</span>
+                    <span>WOW-<span id="order-id">12345</span></span>
+                </div>
+                <div class="order-summary-item">
+                    <span>Payment Method:</span>
+                    <span id="payment-method-summary">Credit Card</span>
+                </div>
+                <div class="order-summary-item">
+                    <span>Date:</span>
+                    <span id="order-date">Loading...</span>
+                </div>
+                <div class="order-summary-item">
+                    <span>Total Amount:</span>
+                    <span>₹<span id="order-amount">0.00</span></span>
+                </div>
+            </div>
+            <button class="modal-btn" id="continue-btn">OK</button>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const paymentForm = document.getElementById('payment-form');
+        const cardDetails = document.getElementById('card-details');
+        const upiDetails = document.getElementById('upi-details');
+        const cardRadio = document.getElementById('card');
+        const upiRadio = document.getElementById('upi');
+        const orderSummaryModal = document.getElementById('order-summary-modal');
+        const continueBtn = document.getElementById('continue-btn');
+        const cardSubmitBtn = document.getElementById('card-submit-btn');
+        const upiSubmitBtn = document.getElementById('upi-submit-btn');
+
+        // Show the default selected payment method details
+        if (cardRadio.checked) {
+            cardDetails.classList.add('active');
+            upiDetails.classList.remove('active');
+            cardSubmitBtn.style.display = 'block';
+            upiSubmitBtn.style.display = 'none';
+        } else if (upiRadio.checked) {
+            upiDetails.classList.add('active');
+            cardDetails.classList.remove('active');
+            upiSubmitBtn.style.display = 'block';
+            cardSubmitBtn.style.display = 'none';
+        }
+
+        // Generate random order ID
+        function generateOrderId() {
+            return Math.floor(10000 + Math.random() * 90000);
+        }
+
+        // Get current date
+        function getCurrentDate() {
+            const options = { year: 'numeric', month: 'long', day: 'numeric' };
+            return new Date().toLocaleDateString('en-US', options);
+        }
+
+        // Calculate random order amount between 500 and 5000
+        function getRandomAmount() {
+            return (Math.random() * (5000 - 500) + 500).toFixed(2);
+        }
+
+        // Show/hide payment details and buttons based on selected method
+        paymentForm.addEventListener('change', (e) => {
+            if (e.target.name === 'payment-method') {
+                if (e.target.value === 'card') {
+                    cardDetails.classList.add('active');
+                    upiDetails.classList.remove('active');
+                    cardSubmitBtn.style.display = 'block';
+                    upiSubmitBtn.style.display = 'none';
+                } else if (e.target.value === 'upi') {
+                    upiDetails.classList.add('active');
+                    cardDetails.classList.remove('active');
+                    upiSubmitBtn.style.display = 'block';
+                    cardSubmitBtn.style.display = 'none';
+                }
+            }
+        });
+
+        // Format card number input
+        const cardNumberInput = document.getElementById('card-number');
+        if (cardNumberInput) {
+            cardNumberInput.addEventListener('input', (e) => {
+                let value = e.target.value.replace(/\s+/g, '');
+                if (value.length > 0) {
+                    value = value.match(new RegExp('.{1,4}', 'g')).join(' ');
+                }
+                e.target.value = value;
+            });
+        }
+
+        // Format expiry date input
+        const expiryInput = document.getElementById('card-expiry');
+        if (expiryInput) {
+            expiryInput.addEventListener('input', (e) => {
+                let value = e.target.value.replace(/\D/g, '');
+                if (value.length > 2) {
+                    value = value.substring(0, 2) + '/' + value.substring(2, 4);
+                }
+                e.target.value = value;
+            });
+        }
+
+        // Handle Credit Card submission
+        cardSubmitBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+
+            const cardNumber = document.getElementById('card-number').value.replace(/\s+/g, '');
+            const cardExpiry = document.getElementById('card-expiry').value;
+            const cardCVV = document.getElementById('card-cvv').value;
+            const cardName = document.getElementById('card-name').value;
+
+            if (!cardNumber || !cardExpiry || !cardCVV || !cardName) {
+                alert('Please fill in all card details.');
+                return;
+            }
+
+            if (cardNumber.length !== 16) {
+                alert('Please enter a valid 16-digit card number.');
+                return;
+            }
+
+            if (!/^\d{2}\/\d{2}$/.test(cardExpiry)) {
+                alert('Please enter a valid expiry date in MM/YY format.');
+                return;
+            }
+
+            if (cardCVV.length !== 3) {
+                alert('Please enter a valid 3-digit CVV.');
+                return;
+            }
+
+            processOrder('Credit Card');
+        });
+
+        // Handle UPI submission
+        upiSubmitBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+
+            const upiID = document.getElementById('upi-id').value;
+            const upiApp = document.getElementById('upi-app').value;
+
+            if (!upiID) {
+                alert('Please enter your UPI ID.');
+                return;
+            }
+
+            if (!upiApp) {
+                alert('Please select your UPI app.');
+                return;
+            }
+
+            if (!/^[a-zA-Z0-9._-]+@[a-zA-Z0-9]+$/.test(upiID)) {
+                alert('Please enter a valid UPI ID (e.g., yourname@upi).');
+                return;
+            }
+
+            processOrder('UPI Payment');
+        });
+
+        // Process the order
+        function processOrder(paymentMethod) {
+            // Show processing state
+            const submitBtn = paymentMethod === 'Credit Card' ? cardSubmitBtn : upiSubmitBtn;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin" style="margin-right: 8px;"></i> Processing...';
+            submitBtn.disabled = true;
+
+            // Simulate processing delay
+            setTimeout(() => {
+                // Update order summary details
+                document.getElementById('order-id').textContent = generateOrderId();
+                document.getElementById('payment-method-summary').textContent = paymentMethod;
+                document.getElementById('order-date').textContent = getCurrentDate();
+                document.getElementById('order-amount').textContent = getRandomAmount();
+
+                // Show order summary modal
+                orderSummaryModal.classList.add('active');
+
+                // Reset submit button
+                submitBtn.innerHTML = '<i class="fas fa-lock" style="margin-right: 8px;"></i> Place Order';
+                submitBtn.disabled = false;
+            }, 2000);
+        }
+
+        // Handle continue button click
+        continueBtn.addEventListener('click', () => {
+            // Get order details
+            const orderId = document.getElementById('order-id').textContent;
+            const orderDate = document.getElementById('order-date').textContent;
+            const orderAmount = document.getElementById('order-amount').textContent;
+
+            // Redirect to tracking page with order details as URL parameters
+            window.location.href = `track_order.php?orderId=${orderId}&orderDate=${encodeURIComponent(orderDate)}&orderAmount=${orderAmount}`;
+        });
+
+        // Auto-focus the first payment method
+        cardRadio.focus();
+    });
+</script>
+    <script>
+        
+    </script>
+</body>
+</html>
